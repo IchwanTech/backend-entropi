@@ -1,0 +1,112 @@
+// Why Decimal(18,4)?
+//   Financial amounts butuh presisi tinggi. 18 digit total, 4 digit desimal.
+//   Angka seperti $999,999.9999 aman tanpa floating-point error.
+//   Native JS number (float64) tidak bisa represent 0.1 + 0.2 = 0.3 dengan tepat.
+//
+// Why separate Ledger table?
+//   Double-entry accounting: setiap transaksi punya sisi debit DAN kredit.
+//   Audit trail lengkap — bisa replay seluruh history keuangan.
+//   Constraint sum(debit) = sum(credit) selalu bisa diverifikasi per orderId.
+//
+// Why idempotencyKey?
+//   Network retry = request yang sama dikirim ulang.
+//   Tanpa idempotency key, 1 payment bisa tercatat 2x.
+//   Dengan unique constraint pada idempotencyKey, DB sendiri yang jadi safety net.
+//
+// Why version as integer?
+//   Optimistic concurrency control: dua request concurrent baca version=1,
+//   keduanya coba update ke version=2, tapi DB hanya izinkan 1 yang menang.
+//   Yang kalah dapat VersionConflict error, lalu retry dengan data terbaru.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Order {
+  id               String         @id @default(cuid())
+  customerId       String
+  amount           Decimal        @db.Decimal(18, 4)
+  paymentMethod    String
+  status           OrderStatus    @default(PENDING)
+  version          Int            @default(0)
+  createdAt        DateTime       @default(now()) @db.Timestamptz
+  updatedAt        DateTime       @updatedAt @db.Timestamptz
+
+  events           EventLog[]
+  ledgerEntries    LedgerEntry[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model EventLog {
+  id               String      @id @default(cuid())
+  aggregateId      String
+  eventType        EventType
+  payload          Json
+  version          Int
+  timestamp        DateTime    @default(now()) @db.Timestamptz
+  idempotencyKey   String      @unique
+
+  order            Order       @relation(fields: [aggregateId], references: [id])
+
+  @@unique([aggregateId, version])
+  @@index([aggregateId, version])
+  @@index([eventType])
+  @@index([timestamp])
+}
+
+model LedgerEntry {
+  id               String        @id @default(cuid())
+  orderId          String
+  account          AccountType
+  // CONSTRAINT: EXACTLY ONE of debit OR credit is non-null
+  // Enforced at application layer + DB check constraint via raw migration
+  debit            Decimal?      @db.Decimal(18, 4)
+  credit           Decimal?      @db.Decimal(18, 4)
+  description      String?
+  timestamp        DateTime      @default(now()) @db.Timestamptz
+
+  order            Order         @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([timestamp])
+}
+
+enum OrderStatus {
+  PENDING
+  PAYMENT_PROCESSING
+  PAYMENT_CONFIRMED
+  FEE_CALCULATED
+  SHIPPED
+  DELIVERED
+  REFUNDED
+  FAILED
+}
+
+enum EventType {
+  OrderCreated
+  PaymentProcessing
+  PaymentConfirmed
+  FeeCalculated
+  OrderShipped
+  OrderDelivered
+  RefundInitiated
+  RefundCompleted
+  SettlementProcessed
+}
+
+enum AccountType {
+  order_balance
+  order_pending
+  payment_received
+  fees_owed
+  seller_payout
+}
