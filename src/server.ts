@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import { env } from "./config/env";
 import { errorHandler } from "./middleware/error-handler";
+import idempotencyPlugin from "./middleware/idempotency";
 import { ordersRoute } from "./routes/orders.route";
 import { paymentsRoute } from "./routes/payments.route";
 import { settlementRoute } from "./routes/settlement.route";
@@ -29,6 +30,10 @@ export async function buildServer() {
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     allowedHeaders: ["Content-Type", "Idempotency-Key"],
   });
+
+  // Idempotency Middleware
+  await fastify.register(idempotencyPlugin);
+
   // Routes
   await fastify.register(ordersRoute);
   await fastify.register(paymentsRoute);
