@@ -86,6 +86,20 @@ function createMockDb() {
           return events.get(where.idempotencyKey) ?? null;
         return null;
       },
+      upsert: async ({ where, create, update }: any) => {
+        const existing = events.get(where.idempotencyKey);
+        if (existing) {
+          // apply update fields if any
+          const updated = { ...existing, ...update };
+          events.set(where.idempotencyKey, updated);
+          return updated;
+        }
+        const event = { id: nextId(), timestamp: new Date(), ...create };
+        events.set(create.idempotencyKey, event);
+        const existing2 = eventsByAggregate.get(create.aggregateId) ?? [];
+        eventsByAggregate.set(create.aggregateId, [...existing2, event]);
+        return event;
+      },
       findFirst: async ({ where, orderBy }: any) => {
         const agg = eventsByAggregate.get(where.aggregateId) ?? [];
         if (agg.length === 0) return null;

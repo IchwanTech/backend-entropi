@@ -317,53 +317,57 @@ async function main() {
   }
   console.log(`Created ${total} orders`);
 
-  // Settlement — TIDAK pakai EventLog karena FK constraint
-  // Data settlement disimpan langsung via aggregateId yang valid (skip event untuk settlement)
-  const today = new Date().toISOString().split("T")[0]!;
-  const deliveredOrders = await prisma.order.findMany({
-    where: { status: "DELIVERED" },
-    select: { id: true, amount: true },
-  });
+  // 4. Generate Daily Settlements for the past 7 days
+  // Karena FK constraint ke Order sudah dicabut, kita bisa pakai aggregateId = settlement-YYYY-MM-DD
+  const todayDate = new Date();
+  for (let daysAgo = 7; daysAgo >= 0; daysAgo--) {
+    const targetDate = new Date(todayDate.getTime() - daysAgo * 24 * 60 * 60 * 1000);
+    const dateStr = targetDate.toISOString().split("T")[0]!;
 
-  if (deliveredOrders.length > 0) {
-    let totalRevenue = new Decimal(0);
-    let totalFees = new Decimal(0);
-    let totalPayout = new Decimal(0);
+    const startOfDay = new Date(`${dateStr}T00:00:00Z`);
+    const endOfDay = new Date(`${dateStr}T23:59:59.999Z`);
 
-    for (const order of deliveredOrders) {
-      const amt = new Decimal(order.amount.toString());
-      const fee = amt.mul("0.03").toDecimalPlaces(4);
-      totalRevenue = totalRevenue.add(amt);
-      totalFees = totalFees.add(fee);
-      totalPayout = totalPayout.add(amt.sub(fee));
-    }
-
-    // Pakai orderId pertama sebagai aggregateId (valid FK)
-    // Version tinggi supaya tidak conflict dengan events order tersebut
-    const firstOrderId = deliveredOrders[0]!.id;
-    await prisma.eventLog.create({
-      data: {
-        aggregateId: firstOrderId,
-        eventType: "SettlementProcessed",
-        payload: {
-          type: "SettlementProcessed",
-          date: today,
-          totalOrders: String(deliveredOrders.length),
-          totalRevenue: totalRevenue.toFixed(4),
-          totalFees: totalFees.toFixed(4),
-          totalPayout: totalPayout.toFixed(4),
-        },
-        version: 99, // version tinggi, tidak conflict
-        idempotencyKey: `settlement-${today}`,
-        timestamp: new Date(),
+    const eligibleOrders = await prisma.order.findMany({
+      where: {
+        status: { in: ["FEE_CALCULATED", "SHIPPED", "DELIVERED"] },
+        createdAt: { gte: startOfDay, lte: endOfDay },
       },
+      select: { amount: true },
     });
 
-    console.log(`Created settlement for ${today}`);
-    console.log(`Orders: ${deliveredOrders.length}`);
-    console.log(`Revenue: $${totalRevenue.toFixed(2)}`);
-    console.log(`Fees: $${totalFees.toFixed(2)}`);
-    console.log(`Payout: $${totalPayout.toFixed(2)}`);
+    if (eligibleOrders.length > 0) {
+      let totalRevenue = new Decimal(0);
+      let totalFees = new Decimal(0);
+      let totalPayout = new Decimal(0);
+
+      for (const order of eligibleOrders) {
+        const amt = new Decimal(order.amount.toString());
+        const fee = amt.mul("0.03").toDecimalPlaces(4);
+        totalRevenue = totalRevenue.add(amt);
+        totalFees = totalFees.add(fee);
+        totalPayout = totalPayout.add(amt.sub(fee));
+      }
+
+      await prisma.eventLog.create({
+        data: {
+          aggregateId: `settlement-${dateStr}`,
+          eventType: "SettlementProcessed",
+          payload: {
+            type: "SettlementProcessed",
+            date: dateStr,
+            totalOrders: String(eligibleOrders.length),
+            totalRevenue: totalRevenue.toFixed(4),
+            totalFees: totalFees.toFixed(4),
+            totalPayout: totalPayout.toFixed(4),
+          },
+          version: 1,
+          idempotencyKey: `settlement-${dateStr}`,
+          timestamp: new Date(endOfDay.getTime()), 
+        },
+      });
+
+      console.log(`Created settlement for ${dateStr} (Orders: ${eligibleOrders.length}, Revenue: $${totalRevenue.toFixed(2)})`);
+    }
   }
 
   console.log("Seed complete!");

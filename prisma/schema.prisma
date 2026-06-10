@@ -38,7 +38,7 @@ model Order {
   createdAt        DateTime       @default(now()) @db.Timestamptz
   updatedAt        DateTime       @updatedAt @db.Timestamptz
 
-  events           EventLog[]
+  // events           EventLog[]
   ledgerEntries    LedgerEntry[]
 
   @@index([customerId])
@@ -55,7 +55,7 @@ model EventLog {
   timestamp        DateTime    @default(now()) @db.Timestamptz
   idempotencyKey   String      @unique
 
-  order            Order       @relation(fields: [aggregateId], references: [id])
+  // order            Order       @relation(fields: [aggregateId], references: [id])
 
   @@unique([aggregateId, version])
   @@index([aggregateId, version])
