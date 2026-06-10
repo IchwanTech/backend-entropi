@@ -14,20 +14,20 @@ export async function buildServer() {
       env.NODE_ENV === "production"
         ? true
         : {
-            transport: {
-              target: "pino-pretty",
-              options: { colorize: true },
-            },
+          transport: {
+            target: "pino-pretty",
+            options: { colorize: true },
           },
+        },
   });
 
   // Security headers
   await fastify.register(helmet);
 
   // CORS — allow frontend origin
-
+  const allowedOrigins = env.CORS_ORIGIN.split(",").map((o) => o.trim());
   await fastify.register(cors, {
-    origin: "*",
+    origin: allowedOrigins.length === 1 && allowedOrigins[0] === "*" ? "*" : allowedOrigins,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     allowedHeaders: ["Content-Type", "Idempotency-Key"],
   });

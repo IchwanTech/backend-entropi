@@ -7,6 +7,8 @@ const envSchema = z.object({
     .enum(["development", "test", "production"])
     .default("development"),
   STRIPE_MOCK_FAILURE_RATE: z.coerce.number().min(0).max(1).default(0.05),
+  // URL frontend yang diizinkan untuk mengakses backend (CORS). Pisahkan dengan koma untuk banyak origin.
+  CORS_ORIGIN: z.string().default("*"),
 });
 
 const loadEnv = () => {
