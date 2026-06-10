@@ -1,3 +1,8 @@
+/**
+ * Seed script — generate data dummy untuk demo dashboard.
+ * Jalankan: npx tsx prisma/seed.ts
+ */
+
 import { PrismaClient } from "@prisma/client";
 import Decimal from "decimal.js";
 
@@ -49,18 +54,16 @@ function randomPaymentMethod(): string {
   return methods[Math.floor(Math.random() * methods.length)]!;
 }
 
-function calculateFee(amount: string): string {
+function calcFee(amount: string): string {
   return new Decimal(amount).mul("0.03").toDecimalPlaces(4).toFixed(4);
 }
 
-function calculatePayout(amount: string): string {
+function calcPayout(amount: string): string {
   const fee = new Decimal(amount).mul("0.03").toDecimalPlaces(4);
   return new Decimal(amount).sub(fee).toFixed(4);
 }
 
-// ── Seed functions ─────────────────────────────────────────────────────────
-
-async function createOrderWithStatus(params: {
+async function createOrder(params: {
   status:
     | "PENDING"
     | "PAYMENT_CONFIRMED"
@@ -77,7 +80,6 @@ async function createOrderWithStatus(params: {
   const paymentMethod = randomPaymentMethod();
   const createdAt = new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000);
 
-  // Tentukan version berdasarkan status
   const versionMap = {
     PENDING: 0,
     PAYMENT_CONFIRMED: 2,
@@ -86,9 +88,8 @@ async function createOrderWithStatus(params: {
     DELIVERED: 5,
     FAILED: 1,
   };
-  const version = versionMap[status];
 
-  // Buat order
+  // 1. Buat Order
   await prisma.order.create({
     data: {
       id: orderId,
@@ -96,13 +97,13 @@ async function createOrderWithStatus(params: {
       amount,
       paymentMethod,
       status,
-      version,
+      version: versionMap[status],
       createdAt,
       updatedAt: createdAt,
     },
   });
 
-  // Event: OrderCreated
+  // 2. Event: OrderCreated — aggregateId = orderId (valid FK)
   await prisma.eventLog.create({
     data: {
       aggregateId: orderId,
@@ -114,7 +115,7 @@ async function createOrderWithStatus(params: {
     },
   });
 
-  // Ledger: OrderCreated
+  // 3. Ledger: OrderCreated
   await prisma.ledgerEntry.createMany({
     data: [
       {
@@ -138,15 +139,15 @@ async function createOrderWithStatus(params: {
 
   if (status === "FAILED") return orderId;
 
+  // Payment flow
   if (
     ["PAYMENT_CONFIRMED", "FEE_CALCULATED", "SHIPPED", "DELIVERED"].includes(
       status,
     )
   ) {
     const chargeId = `ch_mock_${generateId()}`;
-    const payAt = new Date(createdAt.getTime() + 2 * 60 * 1000); // 2 menit setelah order
+    const payAt = new Date(createdAt.getTime() + 2 * 60 * 1000);
 
-    // Event: PaymentConfirmed
     await prisma.eventLog.create({
       data: {
         aggregateId: orderId,
@@ -158,7 +159,6 @@ async function createOrderWithStatus(params: {
       },
     });
 
-    // Ledger: PaymentConfirmed
     await prisma.ledgerEntry.createMany({
       data: [
         {
@@ -166,7 +166,7 @@ async function createOrderWithStatus(params: {
           account: "payment_received",
           debit: amount,
           credit: null,
-          description: `Payment confirmed - charge ${chargeId}`,
+          description: `Payment confirmed - ${chargeId}`,
           timestamp: payAt,
         },
         {
@@ -174,18 +174,18 @@ async function createOrderWithStatus(params: {
           account: "order_balance",
           debit: null,
           credit: amount,
-          description: `Payment confirmed - charge ${chargeId}`,
+          description: `Payment confirmed - ${chargeId}`,
           timestamp: payAt,
         },
       ],
     });
   }
 
+  // Fee flow
   if (["FEE_CALCULATED", "SHIPPED", "DELIVERED"].includes(status)) {
-    const fee = calculateFee(amount);
-    const feeAt = new Date(createdAt.getTime() + 3 * 60 * 1000); // 3 menit setelah order
+    const fee = calcFee(amount);
+    const feeAt = new Date(createdAt.getTime() + 3 * 60 * 1000);
 
-    // Event: FeeCalculated
     await prisma.eventLog.create({
       data: {
         aggregateId: orderId,
@@ -197,7 +197,6 @@ async function createOrderWithStatus(params: {
       },
     });
 
-    // Ledger: FeeCalculated
     await prisma.ledgerEntry.createMany({
       data: [
         {
@@ -220,9 +219,9 @@ async function createOrderWithStatus(params: {
     });
   }
 
+  // Shipped
   if (["SHIPPED", "DELIVERED"].includes(status)) {
     const shipAt = new Date(createdAt.getTime() + 24 * 60 * 60 * 1000);
-
     await prisma.eventLog.create({
       data: {
         aggregateId: orderId,
@@ -238,8 +237,11 @@ async function createOrderWithStatus(params: {
     });
   }
 
+  // Delivered + payout
   if (status === "DELIVERED") {
-    const deliverAt = new Date(createdAt.getTime() + 3 * 24 * 60 * 60 * 1000); // 3 hari setelah
+    const deliverAt = new Date(createdAt.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const settleAt = new Date(createdAt.getTime() + 4 * 24 * 60 * 60 * 1000);
+    const payout = calcPayout(amount);
 
     await prisma.eventLog.create({
       data: {
@@ -252,9 +254,6 @@ async function createOrderWithStatus(params: {
       },
     });
 
-    // Ledger: Settlement payout untuk delivered orders
-    const payout = calculatePayout(amount);
-    const settleAt = new Date(createdAt.getTime() + 4 * 24 * 60 * 60 * 1000);
     await prisma.ledgerEntry.createMany({
       data: [
         {
@@ -262,7 +261,7 @@ async function createOrderWithStatus(params: {
           account: "seller_payout",
           debit: payout,
           credit: null,
-          description: `Daily settlement`,
+          description: "Daily settlement",
           timestamp: settleAt,
         },
         {
@@ -270,7 +269,7 @@ async function createOrderWithStatus(params: {
           account: "payment_received",
           debit: null,
           credit: payout,
-          description: `Daily settlement`,
+          description: "Daily settlement",
           timestamp: settleAt,
         },
       ],
@@ -280,19 +279,15 @@ async function createOrderWithStatus(params: {
   return orderId;
 }
 
-// ── Main seed ──────────────────────────────────────────────────────────────
-
 async function main() {
   console.log("Seeding database...");
 
-  // Clear existing data
   await prisma.ledgerEntry.deleteMany();
   await prisma.eventLog.deleteMany();
   await prisma.order.deleteMany();
   console.log("Cleared existing data");
 
-  // Buat orders dengan berbagai status dan tanggal
-  const orderSpecs: Array<{
+  const specs: Array<{
     status:
       | "PENDING"
       | "PAYMENT_CONFIRMED"
@@ -313,19 +308,17 @@ async function main() {
     { status: "FAILED", daysAgo: 1, count: 2 },
   ];
 
-  let totalCreated = 0;
-  for (const spec of orderSpecs) {
+  let total = 0;
+  for (const spec of specs) {
     for (let i = 0; i < spec.count; i++) {
-      await createOrderWithStatus({
-        status: spec.status,
-        daysAgo: spec.daysAgo,
-      });
-      totalCreated++;
+      await createOrder({ status: spec.status, daysAgo: spec.daysAgo });
+      total++;
     }
   }
-  console.log(`Created ${totalCreated} orders`);
+  console.log(`Created ${total} orders`);
 
-  // Buat settlement event untuk hari ini
+  // Settlement — TIDAK pakai EventLog karena FK constraint
+  // Data settlement disimpan langsung via aggregateId yang valid (skip event untuk settlement)
   const today = new Date().toISOString().split("T")[0]!;
   const deliveredOrders = await prisma.order.findMany({
     where: { status: "DELIVERED" },
@@ -338,16 +331,19 @@ async function main() {
     let totalPayout = new Decimal(0);
 
     for (const order of deliveredOrders) {
-      const amount = new Decimal(order.amount.toString());
-      const fee = amount.mul("0.03").toDecimalPlaces(4);
-      totalRevenue = totalRevenue.add(amount);
+      const amt = new Decimal(order.amount.toString());
+      const fee = amt.mul("0.03").toDecimalPlaces(4);
+      totalRevenue = totalRevenue.add(amt);
       totalFees = totalFees.add(fee);
-      totalPayout = totalPayout.add(amount.sub(fee));
+      totalPayout = totalPayout.add(amt.sub(fee));
     }
 
+    // Pakai orderId pertama sebagai aggregateId (valid FK)
+    // Version tinggi supaya tidak conflict dengan events order tersebut
+    const firstOrderId = deliveredOrders[0]!.id;
     await prisma.eventLog.create({
       data: {
-        aggregateId: `settlement-${today}`,
+        aggregateId: firstOrderId,
         eventType: "SettlementProcessed",
         payload: {
           type: "SettlementProcessed",
@@ -357,10 +353,12 @@ async function main() {
           totalFees: totalFees.toFixed(4),
           totalPayout: totalPayout.toFixed(4),
         },
-        version: 1,
+        version: 99, // version tinggi, tidak conflict
         idempotencyKey: `settlement-${today}`,
+        timestamp: new Date(),
       },
     });
+
     console.log(`Created settlement for ${today}`);
     console.log(`Orders: ${deliveredOrders.length}`);
     console.log(`Revenue: $${totalRevenue.toFixed(2)}`);
@@ -373,7 +371,7 @@ async function main() {
 
 main()
   .catch((e) => {
-    console.error("Seed failed:", e);
+    console.error(" Seed failed:", e);
     process.exit(1);
   })
   .finally(() => prisma.$disconnect());

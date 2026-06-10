@@ -25,8 +25,9 @@ export async function buildServer() {
   await fastify.register(helmet);
 
   // CORS — allow frontend origin
+
   await fastify.register(cors, {
-    origin: env.NODE_ENV === "production",
+    origin: "*",
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     allowedHeaders: ["Content-Type", "Idempotency-Key"],
   });
