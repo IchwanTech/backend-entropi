@@ -12,20 +12,20 @@ export class ReadModelProjection {
   async getOrderSummary(orderId: string): Promise<OrderSummary | null> {
     const order: Order | null = await this.db.order.findUnique({
       where: { id: orderId },
-      include: {
-        events: {
-          orderBy: { version: "asc" },
-          select: { eventType: true, timestamp: true },
-        },
-      },
     });
     if (!order) return null;
+
+    // EventLog FK to Order was intentionally removed (to allow settlement events).
+    // Query events separately via aggregateId.
+    const latestEvent = await this.db.eventLog.findFirst({
+      where: { aggregateId: orderId },
+      orderBy: { version: "desc" },
+      select: { eventType: true, timestamp: true },
+    });
 
     const amount = toDecimal(order.amount.toString());
     const fee = calculateFee(amount);
     const payout = calculatePayout(amount);
-    const events: any[] = (order as any).events ?? [];
-    const latestEvent = events[events.length - 1];
 
     return {
       id: order.id,
