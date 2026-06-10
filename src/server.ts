@@ -3,6 +3,9 @@ import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import { env } from "./config/env";
 import { errorHandler } from "./middleware/error-handler";
+import { ordersRoute } from "./routes/orders.route";
+import { paymentsRoute } from "./routes/payments.route";
+import { settlementRoute } from "./routes/settlement.route";
 
 export async function buildServer() {
   const fastify = Fastify({
@@ -26,6 +29,10 @@ export async function buildServer() {
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     allowedHeaders: ["Content-Type", "Idempotency-Key"],
   });
+  // Routes
+  await fastify.register(ordersRoute);
+  await fastify.register(paymentsRoute);
+  await fastify.register(settlementRoute);
 
   // Health check
   fastify.get("/test", async () => ({
